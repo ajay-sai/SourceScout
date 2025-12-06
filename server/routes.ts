@@ -289,6 +289,36 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/session/:id/privacy", async (req, res) => {
+    try {
+      const updateSchema = z.object({
+        isPrivate: z.boolean(),
+      });
+
+      const parseResult = updateSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid request", 
+          errors: parseResult.error.flatten().fieldErrors 
+        });
+      }
+
+      const session = await storage.getSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+
+      const updatedSession = await storage.updateSession(req.params.id, { 
+        isPrivate: parseResult.data.isPrivate 
+      });
+
+      res.json(updatedSession);
+    } catch (error) {
+      console.error("Error updating session privacy:", error);
+      res.status(500).json({ message: "Failed to update session privacy" });
+    }
+  });
+
   return httpServer;
 }
 

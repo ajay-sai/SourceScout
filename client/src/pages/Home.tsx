@@ -14,6 +14,7 @@ import { AgentActivityPanel } from "@/components/AgentActivityPanel";
 import { SupplierMatchCard, SupplierMatchCardSkeleton } from "@/components/SupplierMatchCard";
 import { ComparisonMatrix, ComparisonMatrixSkeleton } from "@/components/ComparisonMatrix";
 import { EmptyState } from "@/components/EmptyState";
+import { PrivacyToggle, PrivacyIndicator } from "@/components/PrivacyToggle";
 
 import type { 
   WorkflowStepType, 
@@ -35,6 +36,7 @@ export default function Home() {
   const [agentLogs, setAgentLogs] = useState<AgentLogEntry[]>([]);
   const [agentStatus, setAgentStatus] = useState<AgentStatusType>("idle");
   const [resultsView, setResultsView] = useState<"cards" | "matrix">("cards");
+  const [isPrivate, setIsPrivate] = useState<boolean>(false);
 
   const addAgentLog = useCallback((log: Omit<AgentLogEntry, "id" | "timestamp">) => {
     const newLog: AgentLogEntry = {
@@ -46,9 +48,10 @@ export default function Home() {
   }, []);
 
   const analyzeProductMutation = useMutation({
-    mutationFn: async (data: { inputType: InputTypeValue; url?: string; file?: File }) => {
+    mutationFn: async (data: { inputType: InputTypeValue; url?: string; file?: File; isPrivate?: boolean }) => {
       const formData = new FormData();
       formData.append("inputType", data.inputType);
+      formData.append("isPrivate", String(data.isPrivate ?? false));
       
       if (data.url) {
         formData.append("url", data.url);
@@ -81,6 +84,7 @@ export default function Home() {
     onSuccess: (data) => {
       setSessionId(data.session.id);
       setProduct(data.product);
+      setIsPrivate(data.session.isPrivate);
       setAgentStatus("completed");
       addAgentLog({
         agentName: "Analyzer",
@@ -105,6 +109,32 @@ export default function Home() {
       setCurrentStep("upload");
       toast({
         title: "Analysis failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updatePrivacyMutation = useMutation({
+    mutationFn: async (newIsPrivate: boolean) => {
+      if (!sessionId) throw new Error("No session to update");
+      const response = await apiRequest("PATCH", `/api/session/${sessionId}/privacy`, {
+        isPrivate: newIsPrivate,
+      });
+      return response.json() as Promise<SourcingSession>;
+    },
+    onSuccess: (session) => {
+      setIsPrivate(session.isPrivate);
+      toast({
+        title: session.isPrivate ? "Private mode enabled" : "Public mode enabled",
+        description: session.isPrivate 
+          ? "Session data won't be stored in shared knowledge base" 
+          : "Session data will contribute to shared knowledge base",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to update privacy setting",
         description: error.message,
         variant: "destructive",
       });
@@ -176,12 +206,12 @@ export default function Home() {
   });
 
   const handleFileSelect = useCallback((file: File, type: InputTypeValue) => {
-    analyzeProductMutation.mutate({ inputType: type, file });
-  }, [analyzeProductMutation]);
+    analyzeProductMutation.mutate({ inputType: type, file, isPrivate });
+  }, [analyzeProductMutation, isPrivate]);
 
   const handleUrlSubmit = useCallback((url: string) => {
-    analyzeProductMutation.mutate({ inputType: "url", url });
-  }, [analyzeProductMutation]);
+    analyzeProductMutation.mutate({ inputType: "url", url, isPrivate });
+  }, [analyzeProductMutation, isPrivate]);
 
   const handleConstraintsSubmit = useCallback((constraints: SearchConstraints) => {
     searchMutation.mutate(constraints);
@@ -201,6 +231,7 @@ export default function Home() {
     setResults([]);
     setAgentLogs([]);
     setAgentStatus("idle");
+    setIsPrivate(false);
   }, []);
 
   const handleBackToConstraints = useCallback(() => {
@@ -208,34 +239,53 @@ export default function Home() {
     setResults([]);
   }, []);
 
+  const handlePrivacyToggle = useCallback((newIsPrivate: boolean) => {
+    if (sessionId) {
+      updatePrivacyMutation.mutate(newIsPrivate);
+    } else {
+      setIsPrivate(newIsPrivate);
+    }
+  }, [sessionId, updatePrivacyMutation]);
+
   const isAnalyzing = analyzeProductMutation.isPending;
   const isSearching = searchMutation.isPending;
+  const isUpdatingPrivacy = updatePrivacyMutation.isPending;
   const isProcessing = isAnalyzing || isSearching;
 
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-7xl mx-auto px-6 py-8">
         <div className="mb-8">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-                SourceScout
-              </h1>
-              <p className="text-muted-foreground mt-1">
-                AI-powered supplier discovery and comparison
-              </p>
+          <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+            <div className="flex items-center gap-4 flex-wrap">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
+                  SourceScout
+                </h1>
+                <p className="text-muted-foreground mt-1">
+                  AI-powered supplier discovery and comparison
+                </p>
+              </div>
+              {sessionId && <PrivacyIndicator isPrivate={isPrivate} />}
             </div>
-            {currentStep !== "upload" && (
-              <Button 
-                variant="outline" 
-                onClick={handleReset}
-                className="gap-2"
-                data-testid="button-new-search"
-              >
-                <RefreshCw className="h-4 w-4" />
-                New Search
-              </Button>
-            )}
+            <div className="flex items-center gap-4 flex-wrap">
+              <PrivacyToggle
+                isPrivate={isPrivate}
+                onToggle={handlePrivacyToggle}
+                disabled={isAnalyzing || isUpdatingPrivacy}
+              />
+              {currentStep !== "upload" && (
+                <Button 
+                  variant="outline" 
+                  onClick={handleReset}
+                  className="gap-2"
+                  data-testid="button-new-search"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  New Search
+                </Button>
+              )}
+            </div>
           </div>
 
           <div className="max-w-3xl mx-auto">
