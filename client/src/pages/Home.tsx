@@ -15,6 +15,7 @@ import { SupplierMatchCard, SupplierMatchCardSkeleton } from "@/components/Suppl
 import { ComparisonMatrix, ComparisonMatrixSkeleton } from "@/components/ComparisonMatrix";
 import { EmptyState } from "@/components/EmptyState";
 import { PrivacyToggle, PrivacyIndicator } from "@/components/PrivacyToggle";
+import { AlternativeProductCard } from "@/components/AlternativeProductCard";
 
 import type { 
   WorkflowStepType, 
