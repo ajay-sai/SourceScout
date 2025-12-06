@@ -4,6 +4,7 @@ import {
   type SourcingSession, 
   type ProductDNA,
   type SupplierMatch,
+  type AlternativeProduct,
   type AgentLogEntry,
   type SearchConstraints,
   type Supplier,
@@ -36,6 +37,8 @@ export interface IStorage {
   setSessionProduct(id: string, product: ProductDNA): Promise<SourcingSession | undefined>;
   setSessionConstraints(id: string, constraints: SearchConstraints): Promise<SourcingSession | undefined>;
   setSessionResults(id: string, results: SupplierMatch[]): Promise<SourcingSession | undefined>;
+  setSessionAlternatives(id: string, alternatives: AlternativeProduct[]): Promise<SourcingSession | undefined>;
+  setSessionSearchTerms(id: string, searchTerms: string[]): Promise<SourcingSession | undefined>;
   addAgentLog(sessionId: string, log: AgentLogEntry): Promise<SourcingSession | undefined>;
   
   createSupplier(supplier: InsertSupplier): Promise<Supplier>;
@@ -65,8 +68,10 @@ function dbRecordToSession(record: any): SourcingSession {
     originalProduct: record.originalProduct as ProductDNA | undefined,
     constraints: record.constraints as SearchConstraints | undefined,
     results: record.results as SupplierMatch[] | undefined,
+    alternatives: record.alternatives as AlternativeProduct[] | undefined,
     agentLogs: record.agentLogs as AgentLogEntry[] | undefined,
     isPrivate: record.isPrivate,
+    searchTermsUsed: record.searchTermsUsed as string[] | undefined,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };
@@ -113,8 +118,10 @@ export class DatabaseStorage implements IStorage {
     if (updates.originalProduct !== undefined) dbUpdates.originalProduct = updates.originalProduct;
     if (updates.constraints !== undefined) dbUpdates.constraints = updates.constraints;
     if (updates.results !== undefined) dbUpdates.results = updates.results;
+    if (updates.alternatives !== undefined) dbUpdates.alternatives = updates.alternatives;
     if (updates.agentLogs !== undefined) dbUpdates.agentLogs = updates.agentLogs;
     if (updates.isPrivate !== undefined) dbUpdates.isPrivate = updates.isPrivate;
+    if (updates.searchTermsUsed !== undefined) dbUpdates.searchTermsUsed = updates.searchTermsUsed;
 
     const [record] = await db
       .update(sourcingSessions)
@@ -148,6 +155,14 @@ export class DatabaseStorage implements IStorage {
       currentStep: "results",
       status: "completed"
     });
+  }
+
+  async setSessionAlternatives(id: string, alternatives: AlternativeProduct[]): Promise<SourcingSession | undefined> {
+    return this.updateSession(id, { alternatives });
+  }
+
+  async setSessionSearchTerms(id: string, searchTermsUsed: string[]): Promise<SourcingSession | undefined> {
+    return this.updateSession(id, { searchTermsUsed });
   }
 
   async addAgentLog(sessionId: string, log: AgentLogEntry): Promise<SourcingSession | undefined> {

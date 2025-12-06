@@ -7,7 +7,8 @@ import {
   analyzeProductFromUrl, 
   analyzeProductFromImage, 
   analyzeProductFromDocument,
-  generateRfqEmail
+  generateRfqEmail,
+  discoverSuppliers
 } from "./gemini";
 import { ObjectStorageService } from "./objectStorage";
 import { 

@@ -26,8 +26,10 @@ export const sourcingSessions = pgTable("sourcing_sessions", {
   originalProduct: jsonb("original_product"),
   constraints: jsonb("constraints"),
   results: jsonb("results"),
+  alternatives: jsonb("alternatives"),
   agentLogs: jsonb("agent_logs"),
   isPrivate: boolean("is_private").notNull().default(false),
+  searchTermsUsed: jsonb("search_terms_used"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -273,9 +275,38 @@ export const supplierMatchSchema = z.object({
   certifications: z.array(z.string()).optional(),
   location: z.string().optional(),
   trustBadges: z.array(z.string()).optional(),
+  supplierType: z.enum(["manufacturer", "distributor", "trading_company"]).optional(),
+  marketplaceSource: z.string().optional(),
+  confidenceLevel: z.enum(["high", "medium", "low"]).optional(),
+  description: z.string().optional(),
+  specDifferences: z.array(z.object({
+    specName: z.string(),
+    originalValue: z.string(),
+    supplierValue: z.string(),
+    difference: z.string(),
+  })).optional(),
 });
 
 export type SupplierMatch = z.infer<typeof supplierMatchSchema>;
+
+export const alternativeProductSchema = z.object({
+  id: z.string(),
+  productName: z.string(),
+  supplierName: z.string(),
+  description: z.string().optional(),
+  price: z.number(),
+  currency: z.string().default("USD"),
+  moq: z.number().optional(),
+  location: z.string().optional(),
+  alternativeType: z.enum(["budget", "premium", "different_material", "different_size", "similar_function"]),
+  whyAlternative: z.string(),
+  keyDifferences: z.array(z.string()),
+  estimatedSavings: z.number().optional(),
+  tradeoffs: z.array(z.string()),
+  matchScore: z.number().min(0).max(100),
+});
+
+export type AlternativeProduct = z.infer<typeof alternativeProductSchema>;
 
 export const agentLogEntrySchema = z.object({
   id: z.string(),
@@ -294,9 +325,11 @@ export const sourcingSessionSchema = z.object({
   originalProduct: productDnaSchema.optional(),
   constraints: searchConstraintsSchema.optional(),
   results: z.array(supplierMatchSchema).optional(),
+  alternatives: z.array(alternativeProductSchema).optional(),
   agentLogs: z.array(agentLogEntrySchema).optional(),
   status: z.enum(["idle", "searching", "analyzing", "completed", "error"]),
   isPrivate: z.boolean().default(false),
+  searchTermsUsed: z.array(z.string()).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

@@ -289,6 +289,219 @@ function getCategoryIcon(category: string): string | undefined {
   return icons[validateCategory(category)];
 }
 
+interface SupplierDiscoveryInput {
+  productName: string;
+  productDescription?: string;
+  specifications: Array<{ name: string; value: string; unit?: string; category: string }>;
+  targetPrice?: number;
+  maxMoq?: number;
+  maxLeadTimeDays?: number;
+  currency?: string;
+}
+
+interface DiscoveredSupplier {
+  supplierName: string;
+  productName: string;
+  description: string;
+  estimatedPrice: number;
+  currency: string;
+  estimatedMoq: number;
+  estimatedLeadTimeDays: number;
+  location: string;
+  certifications: string[];
+  matchScore: number;
+  matchedSpecs: string[];
+  mismatchedSpecs: string[];
+  specDifferences: Array<{ specName: string; originalValue: string; supplierValue: string; difference: string }>;
+  supplierType: "manufacturer" | "distributor" | "trading_company";
+  marketplaceSource: string;
+  confidenceLevel: "high" | "medium" | "low";
+}
+
+interface AlternativeProduct {
+  productName: string;
+  supplierName: string;
+  description: string;
+  estimatedPrice: number;
+  currency: string;
+  estimatedMoq: number;
+  location: string;
+  alternativeType: "budget" | "premium" | "different_material" | "different_size" | "similar_function";
+  whyAlternative: string;
+  keyDifferences: string[];
+  estimatedSavings?: number;
+  tradeoffs: string[];
+  matchScore: number;
+}
+
+export async function discoverSuppliers(input: SupplierDiscoveryInput): Promise<{
+  suppliers: DiscoveredSupplier[];
+  alternatives: AlternativeProduct[];
+  searchTermsUsed: string[];
+}> {
+  const specsText = input.specifications
+    .map(s => `- ${s.name}: ${s.value}${s.unit ? ` ${s.unit}` : ""} (${s.category})`)
+    .join("\n");
+
+  const prompt = `You are an expert industrial sourcing specialist with deep knowledge of global manufacturing, supplier networks, and product sourcing across major B2B platforms like Alibaba, ThomasNet, Global Sources, Made-in-China, and IndiaMART.
+
+PRODUCT TO SOURCE:
+Name: ${input.productName}
+${input.productDescription ? `Description: ${input.productDescription}` : ""}
+
+SPECIFICATIONS:
+${specsText}
+
+CONSTRAINTS:
+${input.targetPrice ? `Target Price: ${input.currency || "USD"} ${input.targetPrice}` : "No specific target price"}
+${input.maxMoq ? `Maximum MOQ: ${input.maxMoq} units` : "No MOQ constraint"}
+${input.maxLeadTimeDays ? `Maximum Lead Time: ${input.maxLeadTimeDays} days` : "No lead time constraint"}
+
+YOUR TASK:
+Based on your extensive knowledge of the global manufacturing and supplier landscape, identify:
+
+1. PRIMARY SUPPLIERS (5-8): Real-world typical suppliers who would manufacture or distribute this exact product or very close matches. Consider:
+   - Chinese manufacturers on Alibaba/Made-in-China (typically offer lowest prices, higher MOQs)
+   - US/European distributors on ThomasNet (premium pricing, lower MOQs, faster shipping)
+   - Indian manufacturers on IndiaMART (competitive pricing, medium MOQs)
+   - Specialized manufacturers based on the product category
+   - Trading companies that aggregate from multiple factories
+
+2. ALTERNATIVE PRODUCTS (3-5): Similar products that could serve the same function but differ in:
+   - Budget alternatives (cheaper materials, simplified design)
+   - Premium alternatives (higher quality, better features)
+   - Different materials (e.g., plastic vs metal, different grades)
+   - Different sizes or configurations
+   - Products with similar function but different approach
+
+For each supplier/alternative, provide realistic estimates based on typical market conditions for this product category.
+
+Generate diverse results from different regions and supplier types. Be specific about location (city/region, country), realistic about pricing based on product complexity and materials, and accurate about typical MOQs and lead times for each supplier type.`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          suppliers: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                supplierName: { type: Type.STRING },
+                productName: { type: Type.STRING },
+                description: { type: Type.STRING },
+                estimatedPrice: { type: Type.NUMBER },
+                currency: { type: Type.STRING },
+                estimatedMoq: { type: Type.NUMBER },
+                estimatedLeadTimeDays: { type: Type.NUMBER },
+                location: { type: Type.STRING },
+                certifications: { type: Type.ARRAY, items: { type: Type.STRING } },
+                matchScore: { type: Type.NUMBER },
+                matchedSpecs: { type: Type.ARRAY, items: { type: Type.STRING } },
+                mismatchedSpecs: { type: Type.ARRAY, items: { type: Type.STRING } },
+                specDifferences: { 
+                  type: Type.ARRAY, 
+                  items: { 
+                    type: Type.OBJECT,
+                    properties: {
+                      specName: { type: Type.STRING },
+                      originalValue: { type: Type.STRING },
+                      supplierValue: { type: Type.STRING },
+                      difference: { type: Type.STRING }
+                    }
+                  } 
+                },
+                supplierType: { type: Type.STRING },
+                marketplaceSource: { type: Type.STRING },
+                confidenceLevel: { type: Type.STRING }
+              },
+              required: ["supplierName", "productName", "estimatedPrice", "location", "matchScore"]
+            }
+          },
+          alternatives: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                productName: { type: Type.STRING },
+                supplierName: { type: Type.STRING },
+                description: { type: Type.STRING },
+                estimatedPrice: { type: Type.NUMBER },
+                currency: { type: Type.STRING },
+                estimatedMoq: { type: Type.NUMBER },
+                location: { type: Type.STRING },
+                alternativeType: { type: Type.STRING },
+                whyAlternative: { type: Type.STRING },
+                keyDifferences: { type: Type.ARRAY, items: { type: Type.STRING } },
+                estimatedSavings: { type: Type.NUMBER },
+                tradeoffs: { type: Type.ARRAY, items: { type: Type.STRING } },
+                matchScore: { type: Type.NUMBER }
+              },
+              required: ["productName", "supplierName", "estimatedPrice", "alternativeType", "whyAlternative"]
+            }
+          },
+          searchTermsUsed: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          }
+        },
+        required: ["suppliers", "alternatives", "searchTermsUsed"]
+      }
+    }
+  });
+
+  const result = JSON.parse(extractJsonFromResponse(response.text));
+  
+  return {
+    suppliers: result.suppliers || [],
+    alternatives: result.alternatives || [],
+    searchTermsUsed: result.searchTermsUsed || [input.productName]
+  };
+}
+
+export async function expandSearchQuery(productName: string, specifications: Array<{ name: string; value: string; category: string }>): Promise<{
+  expandedQueries: string[];
+  categoryKeywords: string[];
+  synonyms: string[];
+}> {
+  const specsText = specifications.slice(0, 5).map(s => `${s.name}: ${s.value}`).join(", ");
+  
+  const prompt = `Generate expanded search queries for sourcing this product:
+
+Product: ${productName}
+Key Specs: ${specsText}
+
+Generate:
+1. 5 different search query variations (including synonyms, industry terms, alternative names)
+2. Relevant category keywords for B2B marketplaces
+3. Common synonyms or alternative names for this product type
+
+Focus on terms that would work well on Alibaba, ThomasNet, Global Sources, and other B2B platforms.`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          expandedQueries: { type: Type.ARRAY, items: { type: Type.STRING } },
+          categoryKeywords: { type: Type.ARRAY, items: { type: Type.STRING } },
+          synonyms: { type: Type.ARRAY, items: { type: Type.STRING } }
+        },
+        required: ["expandedQueries", "categoryKeywords", "synonyms"]
+      }
+    }
+  });
+
+  return JSON.parse(extractJsonFromResponse(response.text));
+}
+
 interface RfqEmailInput {
   productName: string;
   productDescription?: string;
