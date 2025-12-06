@@ -15,7 +15,8 @@ import {
   startSearchRequestSchema,
   type SupplierMatch, 
   type SearchConstraints,
-  type ProductSpec 
+  type ProductSpec,
+  type AlternativeProduct 
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { 
@@ -196,24 +197,84 @@ export async function registerRoutes(
       const specValues = session.originalProduct.specifications.slice(0, 3).map(s => s.value);
       const fullQuery = `${searchQuery} ${specValues.join(" ")}`.trim();
 
+      console.log(`[Hybrid Search] Starting search for: "${fullQuery}"`);
+
       const scrapedResults = await runParallelScrape(fullQuery);
 
       let results: SupplierMatch[];
-      if (scrapedResults.length > 0) {
+      let alternatives: AlternativeProduct[] = [];
+      let searchTermsUsed: string[] = [fullQuery];
+
+      if (scrapedResults.length >= 3) {
+        console.log(`[Hybrid Search] Scraping returned ${scrapedResults.length} results, using scraped data`);
         results = convertScrapedToSupplierMatches(
           scrapedResults,
           constraints,
           session.originalProduct.specifications
         );
       } else {
-        results = [];
+        console.log(`[Hybrid Search] Scraping returned ${scrapedResults.length} results (< 3), falling back to AI discovery...`);
+        
+        try {
+          const aiResults = await discoverSuppliers({
+            productName: session.originalProduct.name,
+            productDescription: session.originalProduct.description,
+            specifications: session.originalProduct.specifications.map(s => ({
+              name: s.name,
+              value: s.value,
+              unit: s.unit,
+              category: s.category,
+            })),
+            targetPrice: constraints.targetPrice,
+            maxMoq: constraints.maxMoq,
+            maxLeadTimeDays: constraints.maxLeadTimeDays,
+            currency: session.originalProduct.currency,
+          });
+
+          console.log(`[Hybrid Search] AI discovered ${aiResults.suppliers.length} suppliers and ${aiResults.alternatives.length} alternatives`);
+
+          results = convertAIToSupplierMatches(
+            aiResults.suppliers,
+            constraints,
+            session.originalProduct.specifications
+          );
+
+          alternatives = aiResults.alternatives.map(alt => ({
+            id: randomUUID(),
+            productName: alt.productName,
+            supplierName: alt.supplierName,
+            description: alt.description,
+            price: alt.estimatedPrice,
+            currency: alt.currency || "USD",
+            moq: alt.estimatedMoq,
+            location: alt.location,
+            alternativeType: alt.alternativeType,
+            whyAlternative: alt.whyAlternative,
+            keyDifferences: alt.keyDifferences || [],
+            estimatedSavings: alt.estimatedSavings,
+            tradeoffs: alt.tradeoffs || [],
+            matchScore: alt.matchScore,
+          }));
+
+          searchTermsUsed = aiResults.searchTermsUsed || [fullQuery];
+        } catch (aiError) {
+          console.error("[Hybrid Search] AI discovery failed:", aiError);
+          results = scrapedResults.length > 0 
+            ? convertScrapedToSupplierMatches(scrapedResults, constraints, session.originalProduct.specifications)
+            : [];
+        }
       }
 
       await storage.setSessionResults(sessionId, results);
+      await storage.setSessionAlternatives(sessionId, alternatives);
+      await storage.setSessionSearchTerms(sessionId, searchTermsUsed);
+      
       const updatedSession = await storage.getSession(sessionId);
 
       res.json({ 
-        results, 
+        results,
+        alternatives,
+        searchTermsUsed,
         session: updatedSession 
       });
     } catch (error) {
@@ -628,6 +689,67 @@ export async function registerRoutes(
         certifications: item.certifications,
         location: item.location,
         trustBadges: [],
+      };
+    }).sort((a, b) => b.confidenceScore - a.confidenceScore);
+  }
+
+  function convertAIToSupplierMatches(
+    aiSuppliers: Array<{
+      supplierName: string;
+      productName: string;
+      description?: string;
+      estimatedPrice: number;
+      currency?: string;
+      estimatedMoq?: number;
+      estimatedLeadTimeDays?: number;
+      location?: string;
+      certifications?: string[];
+      matchScore: number;
+      matchedSpecs?: string[];
+      mismatchedSpecs?: string[];
+      specDifferences?: Array<{ specName: string; originalValue: string; supplierValue: string; difference: string }>;
+      supplierType?: "manufacturer" | "distributor" | "trading_company";
+      marketplaceSource?: string;
+      confidenceLevel?: "high" | "medium" | "low";
+    }>,
+    constraints: SearchConstraints,
+    originalSpecs: ProductSpec[]
+  ): SupplierMatch[] {
+    return aiSuppliers.map((supplier) => {
+      const basePrice = constraints.targetPrice || 100;
+      const price = supplier.estimatedPrice || basePrice;
+      const priceDelta = Math.round((price - basePrice) / basePrice * 100);
+
+      const matchedSpecs = supplier.matchedSpecs || originalSpecs
+        .filter(s => s.priority === "must_have")
+        .slice(0, Math.floor(originalSpecs.length * 0.7))
+        .map(s => s.id);
+      
+      const mismatchedSpecs = supplier.mismatchedSpecs || originalSpecs
+        .filter(s => s.priority === "must_have")
+        .slice(Math.floor(originalSpecs.length * 0.7))
+        .map(s => s.id);
+
+      return {
+        id: randomUUID(),
+        supplierName: supplier.supplierName,
+        productName: supplier.productName,
+        price,
+        currency: supplier.currency || "USD",
+        moq: supplier.estimatedMoq,
+        leadTimeDays: supplier.estimatedLeadTimeDays,
+        confidenceScore: supplier.matchScore || 75,
+        priceDelta,
+        matchedSpecs,
+        mismatchedSpecs,
+        certifications: supplier.certifications || [],
+        location: supplier.location,
+        trustBadges: [],
+        supplierType: supplier.supplierType,
+        marketplaceSource: supplier.marketplaceSource,
+        confidenceLevel: supplier.confidenceLevel,
+        description: supplier.description,
+        specDifferences: supplier.specDifferences,
       };
     }).sort((a, b) => b.confidenceScore - a.confidenceScore);
   }

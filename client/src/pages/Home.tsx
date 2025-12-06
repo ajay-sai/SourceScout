@@ -24,7 +24,8 @@ import type {
   AgentLogEntry,
   AgentStatusType,
   SourcingSession,
-  InputTypeValue
+  InputTypeValue,
+  AlternativeProduct
 } from "@shared/schema";
 
 interface ScrapeJobStatus {
@@ -46,9 +47,10 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [product, setProduct] = useState<ProductDNA | null>(null);
   const [results, setResults] = useState<SupplierMatch[]>([]);
+  const [alternatives, setAlternatives] = useState<AlternativeProduct[]>([]);
   const [agentLogs, setAgentLogs] = useState<AgentLogEntry[]>([]);
   const [agentStatus, setAgentStatus] = useState<AgentStatusType>("idle");
-  const [resultsView, setResultsView] = useState<"cards" | "matrix">("cards");
+  const [resultsView, setResultsView] = useState<"cards" | "matrix" | "alternatives">("cards");
   const [isPrivate, setIsPrivate] = useState<boolean>(false);
   const [scrapeJobId, setScrapeJobId] = useState<string | null>(null);
   const [isLiveScraping, setIsLiveScraping] = useState<boolean>(false);
@@ -270,12 +272,18 @@ export default function Home() {
         sessionId,
         constraints,
       });
-      return response.json() as Promise<{ results: SupplierMatch[]; session: SourcingSession }>;
+      return response.json() as Promise<{ 
+        results: SupplierMatch[]; 
+        alternatives: AlternativeProduct[];
+        searchTermsUsed: string[];
+        session: SourcingSession;
+      }>;
     },
     onMutate: () => {
       setCurrentStep("search");
       setAgentStatus("searching");
       setResults([]);
+      setAlternatives([]);
       addAgentLog({
         agentName: "Orchestrator",
         action: "Initiating supplier search...",
@@ -299,16 +307,19 @@ export default function Home() {
       
       setTimeout(() => {
         setResults(data.results);
+        setAlternatives(data.alternatives || []);
         setAgentStatus("completed");
+        
+        const altText = data.alternatives?.length ? ` + ${data.alternatives.length} alternatives` : "";
         addAgentLog({
           agentName: "Orchestrator",
-          action: `Search complete! Found ${data.results.length} matching suppliers`,
+          action: `Search complete! Found ${data.results.length} matching suppliers${altText}`,
           status: "completed",
         });
         setCurrentStep("results");
         toast({
           title: "Search complete",
-          description: `Found ${data.results.length} matching suppliers`,
+          description: `Found ${data.results.length} suppliers${altText}`,
         });
       }, 1000);
     },
@@ -561,7 +572,7 @@ export default function Home() {
                 </p>
               </div>
 
-              <Tabs value={resultsView} onValueChange={(v) => setResultsView(v as "cards" | "matrix")}>
+              <Tabs value={resultsView} onValueChange={(v) => setResultsView(v as "cards" | "matrix" | "alternatives")}>
                 <TabsList>
                   <TabsTrigger value="cards" className="gap-2" data-testid="tab-cards-view">
                     <LayoutList className="h-4 w-4" />
@@ -571,11 +582,17 @@ export default function Home() {
                     <Grid3X3 className="h-4 w-4" />
                     Compare
                   </TabsTrigger>
+                  {alternatives.length > 0 && (
+                    <TabsTrigger value="alternatives" className="gap-2" data-testid="tab-alternatives-view">
+                      <Zap className="h-4 w-4" />
+                      Alternatives ({alternatives.length})
+                    </TabsTrigger>
+                  )}
                 </TabsList>
               </Tabs>
             </div>
 
-            {results.length === 0 ? (
+            {results.length === 0 && alternatives.length === 0 ? (
               <EmptyState
                 variant="no-results"
                 onAction={handleBackToConstraints}
@@ -591,7 +608,7 @@ export default function Home() {
                   />
                 ))}
               </div>
-            ) : (
+            ) : resultsView === "matrix" ? (
               product && (
                 <ComparisonMatrix
                   originalSpecs={product.specifications}
@@ -599,7 +616,18 @@ export default function Home() {
                   onSelectSupplier={handleSupplierSelect}
                 />
               )
-            )}
+            ) : resultsView === "alternatives" ? (
+              <div className="space-y-4">
+                <p className="text-muted-foreground text-sm">
+                  These are alternative products that could serve a similar function with different trade-offs.
+                </p>
+                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                  {alternatives.map((alt) => (
+                    <AlternativeProductCard key={alt.id} alternative={alt} />
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <div className="mt-8">
               <AgentActivityPanel
