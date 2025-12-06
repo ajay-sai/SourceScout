@@ -42,6 +42,43 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  async function runParallelScrape(query: string): Promise<ScrapedSupplierData[]> {
+    console.log(`[Parallel Scrape] Starting scrape for: "${query}"`);
+    
+    const alibabaPromise = (async () => {
+      try {
+        console.log("[Parallel Scrape] Starting Alibaba scraper...");
+        const alibabaAgent = new AlibabaScrapingAgent();
+        const results = await alibabaAgent.searchAndScrapeProducts(query);
+        console.log(`[Parallel Scrape] Alibaba returned ${results.length} results`);
+        return results;
+      } catch (error) {
+        console.error("[Parallel Scrape] Alibaba scraper error:", error);
+        return [];
+      }
+    })();
+
+    const thomasnetPromise = (async () => {
+      try {
+        console.log("[Parallel Scrape] Starting ThomasNet scraper...");
+        const thomasnetAgent = new ThomasNetScrapingAgent();
+        const results = await thomasnetAgent.searchAndScrapeSuppliers(query);
+        console.log(`[Parallel Scrape] ThomasNet returned ${results.length} results`);
+        return results;
+      } catch (error) {
+        console.error("[Parallel Scrape] ThomasNet scraper error:", error);
+        return [];
+      }
+    })();
+
+    const [alibabaResults, thomasnetResults] = await Promise.all([alibabaPromise, thomasnetPromise]);
+    
+    const allResults = [...alibabaResults, ...thomasnetResults];
+    console.log(`[Parallel Scrape] Total results: ${allResults.length}`);
+    
+    return allResults;
+  }
+
   app.get("/public-objects/:filePath(*)", async (req, res) => {
     const filePath = req.params.filePath;
     const objectStorageService = new ObjectStorageService();
@@ -154,10 +191,22 @@ export async function registerRoutes(
 
       await storage.setSessionConstraints(sessionId, constraints);
 
-      const results = generateSupplierMatches(
-        session.originalProduct.specifications,
-        constraints
-      );
+      const searchQuery = session.originalProduct.name;
+      const specValues = session.originalProduct.specifications.slice(0, 3).map(s => s.value);
+      const fullQuery = `${searchQuery} ${specValues.join(" ")}`.trim();
+
+      const scrapedResults = await runParallelScrape(fullQuery);
+
+      let results: SupplierMatch[];
+      if (scrapedResults.length > 0) {
+        results = convertScrapedToSupplierMatches(
+          scrapedResults,
+          constraints,
+          session.originalProduct.specifications
+        );
+      } else {
+        results = [];
+      }
 
       await storage.setSessionResults(sessionId, results);
       const updatedSession = await storage.getSession(sessionId);
@@ -430,80 +479,91 @@ export async function registerRoutes(
       agentName: "System",
       action: "Starting live supplier search",
       status: "searching",
-      details: `Query: "${query}" on sources: ${sources.join(", ")}`
+      details: `Query: "${query}" on sources: ${sources.join(", ")} (running in parallel)`
     });
 
-    const allResults: ScrapedSupplierData[] = [];
+    const scrapePromises: Promise<ScrapedSupplierData[]>[] = [];
 
     if (sources.includes("alibaba")) {
-      try {
-        logCallback({
-          id: randomUUID(),
-          timestamp: new Date().toISOString(),
-          agentName: "Alibaba Scraper",
-          action: "Initializing",
-          status: "searching",
-          details: "Starting Alibaba product search..."
-        });
+      scrapePromises.push((async () => {
+        try {
+          logCallback({
+            id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            agentName: "Alibaba Scraper",
+            action: "Initializing",
+            status: "searching",
+            details: "Starting Alibaba product search..."
+          });
 
-        const alibabaAgent = new AlibabaScrapingAgent(logCallback);
-        const alibabaResults = await alibabaAgent.searchAndScrapeProducts(query);
-        allResults.push(...alibabaResults);
+          const alibabaAgent = new AlibabaScrapingAgent(logCallback);
+          const alibabaResults = await alibabaAgent.searchAndScrapeProducts(query);
 
-        logCallback({
-          id: randomUUID(),
-          timestamp: new Date().toISOString(),
-          agentName: "Alibaba Scraper",
-          action: "Completed",
-          status: "completed",
-          details: `Found ${alibabaResults.length} products`
-        });
-      } catch (error) {
-        logCallback({
-          id: randomUUID(),
-          timestamp: new Date().toISOString(),
-          agentName: "Alibaba Scraper",
-          action: "Error",
-          status: "error",
-          details: error instanceof Error ? error.message : String(error)
-        });
-      }
+          logCallback({
+            id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            agentName: "Alibaba Scraper",
+            action: "Completed",
+            status: "completed",
+            details: `Found ${alibabaResults.length} products`
+          });
+
+          return alibabaResults;
+        } catch (error) {
+          logCallback({
+            id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            agentName: "Alibaba Scraper",
+            action: "Error",
+            status: "error",
+            details: error instanceof Error ? error.message : String(error)
+          });
+          return [];
+        }
+      })());
     }
 
     if (sources.includes("thomasnet")) {
-      try {
-        logCallback({
-          id: randomUUID(),
-          timestamp: new Date().toISOString(),
-          agentName: "ThomasNet Scraper",
-          action: "Initializing",
-          status: "searching",
-          details: "Starting ThomasNet supplier search..."
-        });
+      scrapePromises.push((async () => {
+        try {
+          logCallback({
+            id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            agentName: "ThomasNet Scraper",
+            action: "Initializing",
+            status: "searching",
+            details: "Starting ThomasNet supplier search..."
+          });
 
-        const thomasnetAgent = new ThomasNetScrapingAgent(logCallback);
-        const thomasnetResults = await thomasnetAgent.searchAndScrapeSuppliers(query);
-        allResults.push(...thomasnetResults);
+          const thomasnetAgent = new ThomasNetScrapingAgent(logCallback);
+          const thomasnetResults = await thomasnetAgent.searchAndScrapeSuppliers(query);
 
-        logCallback({
-          id: randomUUID(),
-          timestamp: new Date().toISOString(),
-          agentName: "ThomasNet Scraper",
-          action: "Completed",
-          status: "completed",
-          details: `Found ${thomasnetResults.length} suppliers`
-        });
-      } catch (error) {
-        logCallback({
-          id: randomUUID(),
-          timestamp: new Date().toISOString(),
-          agentName: "ThomasNet Scraper",
-          action: "Error",
-          status: "error",
-          details: error instanceof Error ? error.message : String(error)
-        });
-      }
+          logCallback({
+            id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            agentName: "ThomasNet Scraper",
+            action: "Completed",
+            status: "completed",
+            details: `Found ${thomasnetResults.length} suppliers`
+          });
+
+          return thomasnetResults;
+        } catch (error) {
+          logCallback({
+            id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            agentName: "ThomasNet Scraper",
+            action: "Error",
+            status: "error",
+            details: error instanceof Error ? error.message : String(error)
+          });
+          return [];
+        }
+      })());
     }
+
+    const resultsArrays = await Promise.all(scrapePromises);
+    const allResults = resultsArrays.flat();
 
     job.results = allResults;
     job.status = "completed";
