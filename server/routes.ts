@@ -571,6 +571,100 @@ export async function registerRoutes(
     }).sort((a, b) => b.confidenceScore - a.confidenceScore);
   }
 
+  app.get("/api/evaluation/test-cases", async (req, res) => {
+    try {
+      const { getTestCases, initializeGoldenDataset } = await import("./evaluation");
+      await initializeGoldenDataset();
+      const tags = req.query.tags ? String(req.query.tags).split(",") : undefined;
+      const testCases = await getTestCases(tags);
+      res.json({ testCases });
+    } catch (error) {
+      console.error("Error getting test cases:", error);
+      res.status(500).json({ message: "Failed to get test cases" });
+    }
+  });
+
+  app.post("/api/evaluation/runs", async (req, res) => {
+    try {
+      const { createEvaluationRun, initializeGoldenDataset } = await import("./evaluation");
+      await initializeGoldenDataset();
+      const { name, description } = req.body;
+      if (!name) {
+        return res.status(400).json({ message: "Name is required" });
+      }
+      const run = await createEvaluationRun(name, description);
+      res.json({ run });
+    } catch (error) {
+      console.error("Error creating evaluation run:", error);
+      res.status(500).json({ message: "Failed to create evaluation run" });
+    }
+  });
+
+  app.post("/api/evaluation/runs/:runId/execute", async (req, res) => {
+    try {
+      const { runEvaluation } = await import("./evaluation");
+      const { runId } = req.params;
+      const config = req.body || {};
+      
+      const metrics = await runEvaluation(runId, config);
+      res.json({ message: "Evaluation completed", runId, metrics });
+    } catch (error) {
+      console.error("Error running evaluation:", error);
+      res.status(500).json({ message: "Failed to run evaluation", error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.get("/api/evaluation/runs", async (req, res) => {
+    try {
+      const { getEvaluationRuns } = await import("./evaluation");
+      const limit = req.query.limit ? parseInt(String(req.query.limit)) : 10;
+      const runs = await getEvaluationRuns(limit);
+      res.json({ runs });
+    } catch (error) {
+      console.error("Error getting evaluation runs:", error);
+      res.status(500).json({ message: "Failed to get evaluation runs" });
+    }
+  });
+
+  app.get("/api/evaluation/runs/:runId", async (req, res) => {
+    try {
+      const { getEvaluationRun, getEvaluationResults } = await import("./evaluation");
+      const { runId } = req.params;
+      const run = await getEvaluationRun(runId);
+      if (!run) {
+        return res.status(404).json({ message: "Run not found" });
+      }
+      const results = await getEvaluationResults(runId);
+      res.json({ run, results });
+    } catch (error) {
+      console.error("Error getting evaluation run:", error);
+      res.status(500).json({ message: "Failed to get evaluation run" });
+    }
+  });
+
+  app.get("/api/evaluation/metrics", async (req, res) => {
+    try {
+      const { getLatestMetrics } = await import("./evaluation");
+      const metrics = await getLatestMetrics();
+      res.json({ metrics });
+    } catch (error) {
+      console.error("Error getting metrics:", error);
+      res.status(500).json({ message: "Failed to get metrics" });
+    }
+  });
+
+  app.delete("/api/evaluation/runs/:runId", async (req, res) => {
+    try {
+      const { deleteEvaluationRun } = await import("./evaluation");
+      const { runId } = req.params;
+      await deleteEvaluationRun(runId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting evaluation run:", error);
+      res.status(500).json({ message: "Failed to delete evaluation run" });
+    }
+  });
+
   return httpServer;
 }
 

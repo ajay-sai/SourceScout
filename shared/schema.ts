@@ -328,3 +328,124 @@ export const uploadResponseSchema = z.object({
 });
 
 export type UploadResponse = z.infer<typeof uploadResponseSchema>;
+
+export const evaluationRuns = pgTable("evaluation_runs", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("pending"),
+  totalTestCases: integer("total_test_cases").notNull().default(0),
+  passedTestCases: integer("passed_test_cases").notNull().default(0),
+  failedTestCases: integer("failed_test_cases").notNull().default(0),
+  extractionAccuracy: real("extraction_accuracy"),
+  retrievalAccuracy: real("retrieval_accuracy"),
+  overallScore: real("overall_score"),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertEvaluationRunSchema = createInsertSchema(evaluationRuns).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertEvaluationRun = z.infer<typeof insertEvaluationRunSchema>;
+export type EvaluationRun = typeof evaluationRuns.$inferSelect;
+
+export const evaluationTestCases = pgTable("evaluation_test_cases", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  inputType: text("input_type").notNull(),
+  inputData: text("input_data").notNull(),
+  expectedProductName: text("expected_product_name"),
+  expectedSpecs: jsonb("expected_specs").$type<ProductSpec[]>(),
+  expectedSupplierCount: integer("expected_supplier_count"),
+  tags: jsonb("tags").$type<string[]>(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertEvaluationTestCaseSchema = createInsertSchema(evaluationTestCases).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertEvaluationTestCase = z.infer<typeof insertEvaluationTestCaseSchema>;
+export type EvaluationTestCase = typeof evaluationTestCases.$inferSelect;
+
+export const evaluationResults = pgTable("evaluation_results", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  runId: varchar("run_id", { length: 36 }).references(() => evaluationRuns.id).notNull(),
+  testCaseId: varchar("test_case_id", { length: 36 }).references(() => evaluationTestCases.id).notNull(),
+  status: text("status").notNull().default("pending"),
+  extractedProduct: jsonb("extracted_product"),
+  extractionScore: real("extraction_score"),
+  specMatchCount: integer("spec_match_count"),
+  specMismatchCount: integer("spec_mismatch_count"),
+  retrievalScore: real("retrieval_score"),
+  supplierMatchCount: integer("supplier_match_count"),
+  errorMessage: text("error_message"),
+  executionTimeMs: integer("execution_time_ms"),
+  details: jsonb("details"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertEvaluationResultSchema = createInsertSchema(evaluationResults).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertEvaluationResult = z.infer<typeof insertEvaluationResultSchema>;
+export type EvaluationResult = typeof evaluationResults.$inferSelect;
+
+export const evaluationRunsRelations = relations(evaluationRuns, ({ many }) => ({
+  results: many(evaluationResults),
+}));
+
+export const evaluationTestCasesRelations = relations(evaluationTestCases, ({ many }) => ({
+  results: many(evaluationResults),
+}));
+
+export const evaluationResultsRelations = relations(evaluationResults, ({ one }) => ({
+  run: one(evaluationRuns, {
+    fields: [evaluationResults.runId],
+    references: [evaluationRuns.id],
+  }),
+  testCase: one(evaluationTestCases, {
+    fields: [evaluationResults.testCaseId],
+    references: [evaluationTestCases.id],
+  }),
+}));
+
+export const goldenTestCaseSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  inputType: z.enum(["url", "image", "document"]),
+  inputData: z.string(),
+  expectedProductName: z.string().optional(),
+  expectedSpecs: z.array(z.object({
+    name: z.string(),
+    value: z.string(),
+    category: z.enum(["dimensions", "material", "electrical", "certification", "other"]),
+  })).optional(),
+  expectedSupplierCount: z.number().optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+export type GoldenTestCase = z.infer<typeof goldenTestCaseSchema>;
+
+export const evaluationMetricsSchema = z.object({
+  extractionAccuracy: z.number().min(0).max(100),
+  retrievalAccuracy: z.number().min(0).max(100),
+  overallScore: z.number().min(0).max(100),
+  passRate: z.number().min(0).max(100),
+  averageExecutionTime: z.number(),
+  totalTestCases: z.number(),
+  passedTestCases: z.number(),
+  failedTestCases: z.number(),
+});
+
+export type EvaluationMetrics = z.infer<typeof evaluationMetricsSchema>;
