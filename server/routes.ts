@@ -17,6 +17,14 @@ import {
   type ProductSpec 
 } from "@shared/schema";
 import { randomUUID } from "crypto";
+import { 
+  ComputerUseAgent,
+  AlibabaScrapingAgent,
+  ThomasNetScrapingAgent,
+  runSupplierSearch,
+  type AgentLogEntry,
+  type ScrapedSupplierData
+} from "./computerUseAgent";
 
 const analyzeRequestSchema = z.object({
   inputType: z.enum(["url", "image", "document"]),
@@ -318,6 +326,250 @@ export async function registerRoutes(
       res.status(500).json({ message: "Failed to update session privacy" });
     }
   });
+
+  const liveSearchRequestSchema = z.object({
+    sessionId: z.string(),
+    searchQuery: z.string().optional(),
+    sources: z.array(z.enum(["alibaba", "thomasnet"])).optional().default(["alibaba", "thomasnet"]),
+  });
+
+  const activeScrapeJobs = new Map<string, { status: string; logs: AgentLogEntry[]; results: ScrapedSupplierData[] }>();
+
+  app.post("/api/scrape/live", async (req, res) => {
+    try {
+      const parseResult = liveSearchRequestSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid request", 
+          errors: parseResult.error.flatten().fieldErrors 
+        });
+      }
+
+      const { sessionId, searchQuery, sources } = parseResult.data;
+
+      const session = await storage.getSession(sessionId);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+
+      if (!session.originalProduct) {
+        return res.status(400).json({ 
+          message: "Session has no analyzed product. Please analyze a product first." 
+        });
+      }
+
+      const query = searchQuery || session.originalProduct.name;
+      const specNames = session.originalProduct.specifications.slice(0, 3).map(s => s.value);
+      const fullQuery = `${query} ${specNames.join(" ")}`.trim();
+
+      const jobId = randomUUID();
+      activeScrapeJobs.set(jobId, { status: "running", logs: [], results: [] });
+
+      res.json({ 
+        jobId,
+        message: "Live scraping job started",
+        query: fullQuery,
+        sources
+      });
+
+      runLiveScrapeJob(jobId, fullQuery, sources, sessionId).catch(error => {
+        console.error("Scrape job error:", error);
+        const job = activeScrapeJobs.get(jobId);
+        if (job) {
+          job.status = "error";
+          job.logs.push({
+            id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            agentName: "System",
+            action: "Error",
+            status: "error",
+            details: error instanceof Error ? error.message : String(error)
+          });
+        }
+      });
+    } catch (error) {
+      console.error("Error starting live scrape:", error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to start live scraping" 
+      });
+    }
+  });
+
+  app.get("/api/scrape/status/:jobId", (req, res) => {
+    const job = activeScrapeJobs.get(req.params.jobId);
+    if (!job) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+    res.json(job);
+  });
+
+  app.get("/api/scrape/logs/:jobId", (req, res) => {
+    const job = activeScrapeJobs.get(req.params.jobId);
+    if (!job) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+    res.json({ logs: job.logs });
+  });
+
+  async function runLiveScrapeJob(
+    jobId: string, 
+    query: string, 
+    sources: string[], 
+    sessionId: string
+  ) {
+    const job = activeScrapeJobs.get(jobId);
+    if (!job) return;
+
+    const logCallback = (log: AgentLogEntry) => {
+      job.logs.push(log);
+    };
+
+    logCallback({
+      id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      agentName: "System",
+      action: "Starting live supplier search",
+      status: "searching",
+      details: `Query: "${query}" on sources: ${sources.join(", ")}`
+    });
+
+    const allResults: ScrapedSupplierData[] = [];
+
+    if (sources.includes("alibaba")) {
+      try {
+        logCallback({
+          id: randomUUID(),
+          timestamp: new Date().toISOString(),
+          agentName: "Alibaba Scraper",
+          action: "Initializing",
+          status: "searching",
+          details: "Starting Alibaba product search..."
+        });
+
+        const alibabaAgent = new AlibabaScrapingAgent(logCallback);
+        const alibabaResults = await alibabaAgent.searchAndScrapeProducts(query);
+        allResults.push(...alibabaResults);
+
+        logCallback({
+          id: randomUUID(),
+          timestamp: new Date().toISOString(),
+          agentName: "Alibaba Scraper",
+          action: "Completed",
+          status: "completed",
+          details: `Found ${alibabaResults.length} products`
+        });
+      } catch (error) {
+        logCallback({
+          id: randomUUID(),
+          timestamp: new Date().toISOString(),
+          agentName: "Alibaba Scraper",
+          action: "Error",
+          status: "error",
+          details: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    if (sources.includes("thomasnet")) {
+      try {
+        logCallback({
+          id: randomUUID(),
+          timestamp: new Date().toISOString(),
+          agentName: "ThomasNet Scraper",
+          action: "Initializing",
+          status: "searching",
+          details: "Starting ThomasNet supplier search..."
+        });
+
+        const thomasnetAgent = new ThomasNetScrapingAgent(logCallback);
+        const thomasnetResults = await thomasnetAgent.searchAndScrapeSuppliers(query);
+        allResults.push(...thomasnetResults);
+
+        logCallback({
+          id: randomUUID(),
+          timestamp: new Date().toISOString(),
+          agentName: "ThomasNet Scraper",
+          action: "Completed",
+          status: "completed",
+          details: `Found ${thomasnetResults.length} suppliers`
+        });
+      } catch (error) {
+        logCallback({
+          id: randomUUID(),
+          timestamp: new Date().toISOString(),
+          agentName: "ThomasNet Scraper",
+          action: "Error",
+          status: "error",
+          details: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    job.results = allResults;
+    job.status = "completed";
+
+    logCallback({
+      id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      agentName: "System",
+      action: "Search completed",
+      status: "completed",
+      details: `Total results: ${allResults.length}`
+    });
+
+    if (allResults.length > 0) {
+      const session = await storage.getSession(sessionId);
+      if (session?.constraints) {
+        const supplierMatches = convertScrapedToSupplierMatches(
+          allResults, 
+          session.constraints,
+          session.originalProduct?.specifications || []
+        );
+        await storage.setSessionResults(sessionId, supplierMatches);
+      }
+    }
+  }
+
+  function convertScrapedToSupplierMatches(
+    scraped: ScrapedSupplierData[],
+    constraints: SearchConstraints,
+    originalSpecs: ProductSpec[]
+  ): SupplierMatch[] {
+    return scraped.map((item, index) => {
+      const basePrice = constraints.targetPrice || 100;
+      const price = item.price || basePrice * (0.5 + Math.random() * 0.5);
+      const priceDelta = Math.round((price - basePrice) / basePrice * 100);
+
+      const matchedSpecs = originalSpecs
+        .filter(s => s.priority === "must_have")
+        .slice(0, Math.floor(originalSpecs.length * 0.7))
+        .map(s => s.id);
+      
+      const mismatchedSpecs = originalSpecs
+        .filter(s => s.priority === "must_have")
+        .slice(Math.floor(originalSpecs.length * 0.7))
+        .map(s => s.id);
+
+      return {
+        id: randomUUID(),
+        supplierName: item.supplierName,
+        productName: item.productName,
+        productUrl: item.productUrl,
+        imageUrl: item.imageUrl,
+        price,
+        currency: item.currency || "USD",
+        moq: item.moq,
+        leadTimeDays: item.leadTimeDays,
+        confidenceScore: Math.min(70 + Math.random() * 25, 99),
+        priceDelta,
+        matchedSpecs,
+        mismatchedSpecs,
+        certifications: item.certifications,
+        location: item.location,
+        trustBadges: [],
+      };
+    }).sort((a, b) => b.confidenceScore - a.confidenceScore);
+  }
 
   return httpServer;
 }

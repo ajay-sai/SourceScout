@@ -1,0 +1,115 @@
+{
+  "colorScheme": "light",
+  "fonts": [
+    {
+      "family": "Google Sans",
+      "role": "body"
+    },
+    {
+      "family": "Roboto",
+      "role": "body"
+    },
+    {
+      "family": "Noto Sans",
+      "role": "body"
+    },
+    {
+      "family": "Noto Sans JP",
+      "role": "body"
+    },
+    {
+      "family": "Noto Sans KR",
+      "role": "body"
+    }
+  ],
+  "colors": {
+    "primary": "#1A73E8",
+    "accent": "#E8F0FE",
+    "background": "#FFFFFF",
+    "textPrimary": "#202124",
+    "link": "#E8F0FE"
+  },
+  "typography": {
+    "fontFamilies": {
+      "primary": "Google Sans",
+      "heading": "Google Sans"
+    },
+    "fontStacks": {
+      "heading": [
+        "Google Sans",
+        "Noto Sans",
+        "Noto Naskh Arabic",
+        "sans-serif"
+      ],
+      "body": [
+        "Google Sans",
+        "Roboto",
+        "sans-serif"
+      ],
+      "paragraph": [
+        "Google Sans",
+        "Roboto",
+        "sans-serif"
+      ]
+    },
+    "fontSizes": {
+      "h1": "32px",
+      "h2": "24px",
+      "body": "16px"
+    }
+  },
+  "spacing": {
+    "baseUnit": 4,
+    "borderRadius": "3px"
+  },
+  "components": {
+    "input": {
+      "borderColor": "#CCCCCC",
+      "borderRadius": "3px"
+    },
+    "buttonPrimary": {
+      "background": "#FFFFFF",
+      "textColor": "#1A73E8",
+      "borderRadius": "320px",
+      "shadow": "none"
+    }
+  },
+  "images": {
+    "logo": "https://ai.google.dev/_static/googledevai/images/gemini-api-logo.svg",
+    "favicon": "File saved at: attached_assets/favicon.png",
+    "ogImage": "https://ai.google.dev/static/site-assets/images/share-gemini-api-2.png"
+  },
+  "__framework_hints": [],
+  "__llm_logo_reasoning": {
+    "selectedIndex": 0,
+    "reasoning": "Logo #0 ('Gemini API') matches the brand name 'Google AI for Developers' and is located in the header, linking to the homepage, making it the primary brand logo.",
+    "confidence": 0.9
+  },
+  "__llm_button_reasoning": {
+    "primary": {
+      "index": 0,
+      "text": "Get API key",
+      "reasoning": "Button #0 ('Get API key') has action-oriented text and is the most prominent call-to-action, making it the primary button. It uses the brand's primary color for text, which stands out against the white background."
+    },
+    "secondary": {
+      "index": 1,
+      "text": "Send feedback",
+      "reasoning": "Button #1 ('Send feedback') is less prominent and has a subtle border, making it suitable as a secondary button. It has the same background color as the primary button but is visually less emphasized due to its border and muted text color."
+    },
+    "confidence": 0.95
+  },
+  "personality": {
+    "tone": "professional",
+    "energy": "medium",
+    "targetAudience": "developers and technical users"
+  },
+  "designSystem": {
+    "framework": "custom",
+    "componentLibrary": null
+  },
+  "confidence": {
+    "buttons": 0.95,
+    "colors": 0.9,
+    "overall": 0.925
+  }
+}
