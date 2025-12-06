@@ -1,12 +1,13 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, jsonb, timestamp } from "drizzle-orm/pg-core";
+import { sql, relations } from "drizzle-orm";
+import { pgTable, text, varchar, integer, boolean, jsonb, timestamp, real, index, vector } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
@@ -16,6 +17,172 @@ export const insertUserSchema = createInsertSchema(users).pick({
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+export const sourcingSessions = pgTable("sourcing_sessions", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id", { length: 36 }).references(() => users.id),
+  currentStep: text("current_step").notNull().default("upload"),
+  status: text("status").notNull().default("idle"),
+  originalProduct: jsonb("original_product"),
+  constraints: jsonb("constraints"),
+  results: jsonb("results"),
+  agentLogs: jsonb("agent_logs"),
+  isPrivate: boolean("is_private").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertSourcingSessionSchema = createInsertSchema(sourcingSessions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertSourcingSession = z.infer<typeof insertSourcingSessionSchema>;
+export type SourcingSessionRecord = typeof sourcingSessions.$inferSelect;
+
+export const suppliers = pgTable("suppliers", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  location: text("location"),
+  website: text("website"),
+  contactEmail: text("contact_email"),
+  certifications: jsonb("certifications").$type<string[]>(),
+  trustBadges: jsonb("trust_badges").$type<string[]>(),
+  averageLeadTime: integer("average_lead_time"),
+  minimumMoq: integer("minimum_moq"),
+  productCategories: jsonb("product_categories").$type<string[]>(),
+  isVerified: boolean("is_verified").default(false),
+  sourceType: text("source_type"),
+  lastScrapedAt: timestamp("last_scraped_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("suppliers_name_idx").on(table.name),
+]);
+
+export const insertSupplierSchema = createInsertSchema(suppliers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertSupplier = z.infer<typeof insertSupplierSchema>;
+export type Supplier = typeof suppliers.$inferSelect;
+
+export const supplierProducts = pgTable("supplier_products", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  supplierId: varchar("supplier_id", { length: 36 }).references(() => suppliers.id).notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  price: real("price"),
+  currency: text("currency").default("USD"),
+  moq: integer("moq"),
+  leadTimeDays: integer("lead_time_days"),
+  specifications: jsonb("specifications"),
+  imageUrl: text("image_url"),
+  productUrl: text("product_url"),
+  scrapedAt: timestamp("scraped_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("supplier_products_supplier_idx").on(table.supplierId),
+]);
+
+export const insertSupplierProductSchema = createInsertSchema(supplierProducts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertSupplierProduct = z.infer<typeof insertSupplierProductSchema>;
+export type SupplierProduct = typeof supplierProducts.$inferSelect;
+
+export const productEmbeddings = pgTable("product_embeddings", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  supplierProductId: varchar("supplier_product_id", { length: 36 }).references(() => supplierProducts.id),
+  sessionId: varchar("session_id", { length: 36 }).references(() => sourcingSessions.id),
+  embeddingType: text("embedding_type").notNull(),
+  embedding: real("embedding").array(),
+  textContent: text("text_content"),
+  isPublic: boolean("is_public").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertProductEmbeddingSchema = createInsertSchema(productEmbeddings).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertProductEmbedding = z.infer<typeof insertProductEmbeddingSchema>;
+export type ProductEmbedding = typeof productEmbeddings.$inferSelect;
+
+export const rfqEmails = pgTable("rfq_emails", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: varchar("session_id", { length: 36 }).references(() => sourcingSessions.id).notNull(),
+  supplierId: varchar("supplier_id", { length: 36 }).references(() => suppliers.id),
+  supplierMatchId: varchar("supplier_match_id", { length: 36 }),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  status: text("status").default("draft"),
+  sentAt: timestamp("sent_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertRfqEmailSchema = createInsertSchema(rfqEmails).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertRfqEmail = z.infer<typeof insertRfqEmailSchema>;
+export type RfqEmail = typeof rfqEmails.$inferSelect;
+
+export const usersRelations = relations(users, ({ many }) => ({
+  sessions: many(sourcingSessions),
+}));
+
+export const sourcingSessionsRelations = relations(sourcingSessions, ({ one, many }) => ({
+  user: one(users, {
+    fields: [sourcingSessions.userId],
+    references: [users.id],
+  }),
+  embeddings: many(productEmbeddings),
+  rfqEmails: many(rfqEmails),
+}));
+
+export const suppliersRelations = relations(suppliers, ({ many }) => ({
+  products: many(supplierProducts),
+}));
+
+export const supplierProductsRelations = relations(supplierProducts, ({ one, many }) => ({
+  supplier: one(suppliers, {
+    fields: [supplierProducts.supplierId],
+    references: [suppliers.id],
+  }),
+  embeddings: many(productEmbeddings),
+}));
+
+export const productEmbeddingsRelations = relations(productEmbeddings, ({ one }) => ({
+  supplierProduct: one(supplierProducts, {
+    fields: [productEmbeddings.supplierProductId],
+    references: [supplierProducts.id],
+  }),
+  session: one(sourcingSessions, {
+    fields: [productEmbeddings.sessionId],
+    references: [sourcingSessions.id],
+  }),
+}));
+
+export const rfqEmailsRelations = relations(rfqEmails, ({ one }) => ({
+  session: one(sourcingSessions, {
+    fields: [rfqEmails.sessionId],
+    references: [sourcingSessions.id],
+  }),
+  supplier: one(suppliers, {
+    fields: [rfqEmails.supplierId],
+    references: [suppliers.id],
+  }),
+}));
 
 export const ConstraintPriority = {
   MUST_HAVE: "must_have",
@@ -129,6 +296,7 @@ export const sourcingSessionSchema = z.object({
   results: z.array(supplierMatchSchema).optional(),
   agentLogs: z.array(agentLogEntrySchema).optional(),
   status: z.enum(["idle", "searching", "analyzing", "completed", "error"]),
+  isPrivate: z.boolean().default(false),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

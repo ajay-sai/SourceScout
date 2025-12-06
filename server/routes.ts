@@ -20,6 +20,7 @@ import { randomUUID } from "crypto";
 const analyzeRequestSchema = z.object({
   inputType: z.enum(["url", "image", "document"]),
   url: z.string().url().optional(),
+  isPrivate: z.preprocess((val) => val === "true" || val === true, z.boolean()).optional().default(false),
 });
 
 const upload = multer({ 
@@ -68,10 +69,10 @@ export async function registerRoutes(
         });
       }
 
-      const { inputType, url } = parseResult.data;
+      const { inputType, url, isPrivate } = parseResult.data;
       const file = req.file;
 
-      const session = await storage.createSession();
+      const session = await storage.createSession(isPrivate);
 
       let product;
 
