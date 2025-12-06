@@ -6,7 +6,8 @@ import { storage } from "./storage";
 import { 
   analyzeProductFromUrl, 
   analyzeProductFromImage, 
-  analyzeProductFromDocument 
+  analyzeProductFromDocument,
+  generateRfqEmail
 } from "./gemini";
 import { ObjectStorageService } from "./objectStorage";
 import { 
@@ -175,6 +176,116 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error getting session:", error);
       res.status(500).json({ message: "Failed to get session" });
+    }
+  });
+
+  const generateRfqRequestSchema = z.object({
+    sessionId: z.string(),
+    supplierMatchId: z.string(),
+    quantity: z.number().optional(),
+    additionalRequirements: z.string().optional(),
+  });
+
+  app.post("/api/rfq/generate", async (req, res) => {
+    try {
+      const parseResult = generateRfqRequestSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid request", 
+          errors: parseResult.error.flatten().fieldErrors 
+        });
+      }
+
+      const { sessionId, supplierMatchId, quantity, additionalRequirements } = parseResult.data;
+
+      const session = await storage.getSession(sessionId);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+
+      if (!session.originalProduct) {
+        return res.status(400).json({ message: "Session has no analyzed product" });
+      }
+
+      if (!session.results || session.results.length === 0) {
+        return res.status(400).json({ message: "Session has no supplier matches" });
+      }
+
+      const supplierMatch = session.results.find(r => r.id === supplierMatchId);
+      if (!supplierMatch) {
+        return res.status(404).json({ message: "Supplier match not found" });
+      }
+
+      const generatedEmail = await generateRfqEmail({
+        productName: session.originalProduct.name,
+        productDescription: session.originalProduct.description,
+        specifications: session.originalProduct.specifications.map(s => ({
+          name: s.name,
+          value: s.value,
+          unit: s.unit,
+        })),
+        supplierName: supplierMatch.supplierName,
+        quantity,
+        targetPrice: session.constraints?.targetPrice,
+        currency: session.originalProduct.currency,
+        additionalRequirements,
+      });
+
+      const rfqEmail = await storage.createRfqEmail({
+        sessionId,
+        supplierMatchId,
+        subject: generatedEmail.subject,
+        body: generatedEmail.body,
+        status: "draft",
+      });
+
+      res.json({ 
+        email: rfqEmail,
+        supplierMatch 
+      });
+    } catch (error) {
+      console.error("Error generating RFQ email:", error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to generate RFQ email" 
+      });
+    }
+  });
+
+  app.get("/api/rfq/:sessionId", async (req, res) => {
+    try {
+      const emails = await storage.getRfqEmails(req.params.sessionId);
+      res.json(emails);
+    } catch (error) {
+      console.error("Error getting RFQ emails:", error);
+      res.status(500).json({ message: "Failed to get RFQ emails" });
+    }
+  });
+
+  app.patch("/api/rfq/:id", async (req, res) => {
+    try {
+      const updateSchema = z.object({
+        subject: z.string().optional(),
+        body: z.string().optional(),
+        status: z.enum(["draft", "sent"]).optional(),
+      });
+
+      const parseResult = updateSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid request", 
+          errors: parseResult.error.flatten().fieldErrors 
+        });
+      }
+
+      const email = await storage.updateRfqEmail(req.params.id, parseResult.data);
+      if (!email) {
+        return res.status(404).json({ message: "RFQ email not found" });
+      }
+
+      res.json(email);
+    } catch (error) {
+      console.error("Error updating RFQ email:", error);
+      res.status(500).json({ message: "Failed to update RFQ email" });
     }
   });
 

@@ -345,6 +345,7 @@ export default function Home() {
                     key={match.id}
                     match={match}
                     onSelect={handleSupplierSelect}
+                    sessionId={sessionId || undefined}
                   />
                 ))}
               </div>

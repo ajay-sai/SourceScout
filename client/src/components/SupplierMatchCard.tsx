@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,15 +14,18 @@ import {
   CheckCircle2, 
   XCircle,
   Star,
-  ShieldCheck
+  ShieldCheck,
+  Mail
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { RfqEmailModal } from "./RfqEmailModal";
 import type { SupplierMatch } from "@shared/schema";
 
 interface SupplierMatchCardProps {
   match: SupplierMatch;
   onSelect?: (match: SupplierMatch) => void;
   isSelected?: boolean;
+  sessionId?: string;
 }
 
 function getTrustBadgeIcon(badge: string) {
@@ -31,11 +35,21 @@ function getTrustBadgeIcon(badge: string) {
   return ShieldCheck;
 }
 
-export function SupplierMatchCard({ match, onSelect, isSelected = false }: SupplierMatchCardProps) {
+export function SupplierMatchCard({ match, onSelect, isSelected = false, sessionId }: SupplierMatchCardProps) {
+  const [isRfqModalOpen, setIsRfqModalOpen] = useState(false);
   const hasSavings = match.priceDelta < 0;
   const savingsPercent = Math.abs(match.priceDelta).toFixed(0);
 
   return (
+    <>
+      {sessionId && (
+        <RfqEmailModal
+          isOpen={isRfqModalOpen}
+          onClose={() => setIsRfqModalOpen(false)}
+          supplierMatch={match}
+          sessionId={sessionId}
+        />
+      )}
     <Card 
       className={cn(
         "relative overflow-visible transition-all duration-200 hover-elevate",
@@ -159,6 +173,17 @@ export function SupplierMatchCard({ match, onSelect, isSelected = false }: Suppl
         </div>
 
         <div className="flex items-center gap-2 mt-4">
+          {sessionId && (
+            <Button 
+              variant="outline"
+              className="flex-1 gap-2" 
+              onClick={() => setIsRfqModalOpen(true)}
+              data-testid={`button-generate-rfq-${match.id}`}
+            >
+              <Mail className="h-4 w-4" />
+              Generate RFQ
+            </Button>
+          )}
           <Button 
             className="flex-1 gap-2" 
             onClick={() => onSelect?.(match)}
@@ -182,6 +207,7 @@ export function SupplierMatchCard({ match, onSelect, isSelected = false }: Suppl
         </div>
       </CardContent>
     </Card>
+    </>
   );
 }
 

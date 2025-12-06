@@ -10,6 +10,19 @@ const ai = new GoogleGenAI({
   },
 });
 
+function extractJsonFromResponse(text: string | undefined): string {
+  if (!text) return "{}";
+  
+  let cleaned = text.trim();
+  
+  const jsonCodeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (jsonCodeBlockMatch) {
+    cleaned = jsonCodeBlockMatch[1].trim();
+  }
+  
+  return cleaned || "{}";
+}
+
 interface ExtractedProduct {
   name: string;
   description?: string;
@@ -77,7 +90,7 @@ Return the data in a structured format.`;
     }
   });
 
-  const extracted: ExtractedProduct = JSON.parse(response.text || "{}");
+  const extracted: ExtractedProduct = JSON.parse(extractJsonFromResponse(response.text));
   return convertToProductDNA(extracted, "url", url);
 }
 
@@ -136,7 +149,7 @@ Return the data in a structured format.`;
     }
   });
 
-  const extracted: ExtractedProduct = JSON.parse(response.text || "{}");
+  const extracted: ExtractedProduct = JSON.parse(extractJsonFromResponse(response.text));
   return convertToProductDNA(extracted, "image");
 }
 
@@ -198,7 +211,7 @@ Return the data in a structured format.`;
     }
   });
 
-  const extracted: ExtractedProduct = JSON.parse(response.text || "{}");
+  const extracted: ExtractedProduct = JSON.parse(extractJsonFromResponse(response.text));
   return convertToProductDNA(extracted, "document");
 }
 
@@ -274,4 +287,76 @@ function getCategoryIcon(category: string): string | undefined {
     other: "info",
   };
   return icons[validateCategory(category)];
+}
+
+interface RfqEmailInput {
+  productName: string;
+  productDescription?: string;
+  specifications: Array<{ name: string; value: string; unit?: string }>;
+  supplierName: string;
+  quantity?: number;
+  targetPrice?: number;
+  currency?: string;
+  additionalRequirements?: string;
+}
+
+interface GeneratedRfqEmail {
+  subject: string;
+  body: string;
+}
+
+export async function generateRfqEmail(input: RfqEmailInput): Promise<GeneratedRfqEmail> {
+  const specsText = input.specifications
+    .map(s => `- ${s.name}: ${s.value}${s.unit ? ` ${s.unit}` : ""}`)
+    .join("\n");
+
+  const prompt = `Generate a professional Request for Quotation (RFQ) email to send to a supplier.
+
+SUPPLIER: ${input.supplierName}
+
+PRODUCT DETAILS:
+Name: ${input.productName}
+${input.productDescription ? `Description: ${input.productDescription}` : ""}
+
+KEY SPECIFICATIONS:
+${specsText}
+
+${input.quantity ? `QUANTITY NEEDED: ${input.quantity} units` : ""}
+${input.targetPrice ? `TARGET PRICE: ${input.currency || "USD"} ${input.targetPrice} per unit` : ""}
+${input.additionalRequirements ? `ADDITIONAL REQUIREMENTS: ${input.additionalRequirements}` : ""}
+
+Generate a professional, concise RFQ email with:
+1. A clear subject line
+2. A professional greeting
+3. Brief introduction stating the purpose
+4. Product specifications in a clear format
+5. Request for pricing, lead time, and MOQ
+6. Request for certifications if applicable
+7. Professional closing
+
+Keep the tone professional but friendly. The email should be ready to send.`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          subject: { type: Type.STRING },
+          body: { type: Type.STRING },
+        },
+        required: ["subject", "body"]
+      }
+    }
+  });
+
+  const result: GeneratedRfqEmail = JSON.parse(extractJsonFromResponse(response.text));
+  
+  if (!result.subject || !result.body) {
+    throw new Error("Failed to generate RFQ email - invalid response from AI");
+  }
+
+  return result;
 }
