@@ -5,16 +5,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
-import { Search, Beaker } from "lucide-react";
+import { Search } from "lucide-react";
 import Home from "@/pages/Home";
-import Evaluation from "@/pages/Evaluation";
 import NotFound from "@/pages/not-found";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
-      <Route path="/evaluation" component={Evaluation} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -47,16 +45,6 @@ function App() {
                     >
                       <Search className="h-4 w-4 mr-2" />
                       Sourcing
-                    </Button>
-                  </Link>
-                  <Link href="/evaluation">
-                    <Button 
-                      variant={location === "/evaluation" ? "secondary" : "ghost"} 
-                      size="sm"
-                      data-testid="nav-evaluation"
-                    >
-                      <Beaker className="h-4 w-4 mr-2" />
-                      Evaluation
                     </Button>
                   </Link>
                 </nav>
