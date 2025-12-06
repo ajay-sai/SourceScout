@@ -557,8 +557,8 @@ export default function Home() {
 
         {currentStep === "results" && (
           <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-3 flex-wrap">
                 <Button
                   variant="ghost"
                   onClick={handleBackToConstraints}
@@ -568,7 +568,16 @@ export default function Home() {
                   <ArrowLeft className="h-4 w-4" />
                   Modify Search
                 </Button>
-                <p className="text-muted-foreground">
+                <Button
+                  variant="outline"
+                  onClick={handleReset}
+                  className="gap-2"
+                  data-testid="button-search-new-product"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Search New Product
+                </Button>
+                <p className="text-muted-foreground text-sm">
                   Found <span className="font-medium text-foreground">{results.length}</span> matching suppliers
                 </p>
               </div>
