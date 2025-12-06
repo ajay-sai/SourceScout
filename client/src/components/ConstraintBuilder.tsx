@@ -6,14 +6,16 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Lock, Unlock, DollarSign, Package, Clock, ArrowRight, Ruler, Zap, Award, Tag } from "lucide-react";
+import { Lock, Unlock, DollarSign, Package, Clock, ArrowRight, Ruler, Zap, Award, Tag, Globe, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProductSpec, SearchConstraints, ConstraintPriorityType } from "@shared/schema";
 
 interface ConstraintBuilderProps {
   specifications: ProductSpec[];
   onSubmit: (constraints: SearchConstraints) => void;
+  onLiveScrape?: (constraints: SearchConstraints) => void;
   isLoading?: boolean;
+  isLiveScraping?: boolean;
 }
 
 const categoryIcons: Record<string, typeof Ruler> = {
@@ -24,7 +26,7 @@ const categoryIcons: Record<string, typeof Ruler> = {
   other: Tag,
 };
 
-export function ConstraintBuilder({ specifications, onSubmit, isLoading = false }: ConstraintBuilderProps) {
+export function ConstraintBuilder({ specifications, onSubmit, onLiveScrape, isLoading = false, isLiveScraping = false }: ConstraintBuilderProps) {
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
   const [targetPrice, setTargetPrice] = useState<string>("");
   const [maxMoq, setMaxMoq] = useState<string>("");
@@ -211,17 +213,48 @@ export function ConstraintBuilder({ specifications, onSubmit, isLoading = false 
         </CardContent>
       </Card>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-3 flex-wrap">
         <Button
           size="lg"
+          variant="outline"
           onClick={handleSubmit}
-          disabled={isLoading}
+          disabled={isLoading || isLiveScraping}
           className="gap-2"
           data-testid="button-start-search"
         >
-          Start Sourcing Search
+          Quick Search
           <ArrowRight className="h-4 w-4" />
         </Button>
+        {onLiveScrape && (
+          <Button
+            size="lg"
+            onClick={() => {
+              const constraints: SearchConstraints = {
+                specifications: specs,
+                targetPrice: targetPrice ? parseFloat(targetPrice) : undefined,
+                maxMoq: maxMoq ? parseInt(maxMoq) : undefined,
+                maxLeadTimeDays: maxLeadTime ? parseInt(maxLeadTime) : undefined,
+              };
+              onLiveScrape(constraints);
+            }}
+            disabled={isLoading || isLiveScraping}
+            className="gap-2"
+            data-testid="button-live-scrape"
+          >
+            {isLiveScraping ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Scraping Live...
+              </>
+            ) : (
+              <>
+                <Globe className="h-4 w-4" />
+                Live Supplier Scrape
+                <Zap className="h-4 w-4" />
+              </>
+            )}
+          </Button>
+        )}
       </div>
     </div>
   );

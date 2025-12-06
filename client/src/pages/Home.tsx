@@ -1,10 +1,10 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Grid3X3, LayoutList, RefreshCw } from "lucide-react";
+import { ArrowLeft, Grid3X3, LayoutList, RefreshCw, Zap } from "lucide-react";
 
 import { StepProgress } from "@/components/StepProgress";
 import { DropZone } from "@/components/DropZone";
@@ -27,6 +27,19 @@ import type {
   InputTypeValue
 } from "@shared/schema";
 
+interface ScrapeJobStatus {
+  status: string;
+  logs: AgentLogEntry[];
+  results: Array<{
+    supplierName: string;
+    productName: string;
+    price?: number;
+    currency: string;
+    moq?: number;
+    location?: string;
+  }>;
+}
+
 export default function Home() {
   const { toast } = useToast();
   const [currentStep, setCurrentStep] = useState<WorkflowStepType>("upload");
@@ -37,6 +50,9 @@ export default function Home() {
   const [agentStatus, setAgentStatus] = useState<AgentStatusType>("idle");
   const [resultsView, setResultsView] = useState<"cards" | "matrix">("cards");
   const [isPrivate, setIsPrivate] = useState<boolean>(false);
+  const [scrapeJobId, setScrapeJobId] = useState<string | null>(null);
+  const [isLiveScraping, setIsLiveScraping] = useState<boolean>(false);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const addAgentLog = useCallback((log: Omit<AgentLogEntry, "id" | "timestamp">) => {
     const newLog: AgentLogEntry = {
@@ -46,6 +62,113 @@ export default function Home() {
     };
     setAgentLogs((prev) => [...prev, newLog]);
   }, []);
+
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
+
+  const pollJobStatus = useCallback(async (jobId: string) => {
+    try {
+      const response = await fetch(`/api/scrape/status/${jobId}`);
+      if (!response.ok) {
+        throw new Error("Failed to get job status");
+      }
+      const data: ScrapeJobStatus = await response.json();
+      
+      if (data.logs && data.logs.length > 0) {
+        setAgentLogs(prev => {
+          const existingIds = new Set(prev.map(l => l.id));
+          const newLogs = data.logs.filter((l: AgentLogEntry) => !existingIds.has(l.id));
+          return [...prev, ...newLogs];
+        });
+      }
+      
+      if (data.status === "completed" || data.status === "error") {
+        stopPolling();
+        setIsLiveScraping(false);
+        setScrapeJobId(null);
+        
+        if (data.status === "completed") {
+          setAgentStatus("completed");
+          
+          if (!sessionId) {
+            toast({
+              title: "Scraping complete",
+              description: "Results processed but session was lost",
+              variant: "destructive",
+            });
+            setCurrentStep("configure");
+            return;
+          }
+          
+          const sessionResponse = await fetch(`/api/session/${sessionId}`);
+          if (sessionResponse.ok) {
+            const sessionData: SourcingSession = await sessionResponse.json();
+            if (sessionData.results && sessionData.results.length > 0) {
+              setResults(sessionData.results);
+              queryClient.invalidateQueries({ queryKey: ['/api/session', sessionId] });
+              setCurrentStep("results");
+              toast({
+                title: "Live scraping complete",
+                description: `Found ${sessionData.results.length} suppliers from live sources`,
+              });
+            } else if (data.results && data.results.length > 0) {
+              const convertedResults: SupplierMatch[] = data.results.map((r, index) => ({
+                id: `scraped-${index}-${Date.now()}`,
+                supplierName: r.supplierName,
+                productName: r.productName,
+                price: r.price || 0,
+                currency: r.currency || "USD",
+                moq: r.moq,
+                location: r.location,
+                confidenceScore: 75,
+                priceDelta: 0,
+                matchedSpecs: [],
+                mismatchedSpecs: [],
+              }));
+              setResults(convertedResults);
+              queryClient.invalidateQueries({ queryKey: ['/api/session', sessionId] });
+              setCurrentStep("results");
+              toast({
+                title: "Live scraping complete",
+                description: `Found ${data.results.length} suppliers from live sources`,
+              });
+            } else {
+              toast({
+                title: "Scraping complete",
+                description: "No suppliers found matching your criteria",
+                variant: "destructive",
+              });
+              setCurrentStep("configure");
+            }
+          } else {
+            toast({
+              title: "Session error",
+              description: "Failed to retrieve session data",
+              variant: "destructive",
+            });
+            setCurrentStep("configure");
+          }
+        } else {
+          setAgentStatus("error");
+          toast({
+            title: "Live scraping failed",
+            description: "An error occurred during supplier search",
+            variant: "destructive",
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Polling error:", error);
+    }
+  }, [sessionId, stopPolling, toast]);
 
   const analyzeProductMutation = useMutation({
     mutationFn: async (data: { inputType: InputTypeValue; url?: string; file?: File; isPrivate?: boolean }) => {
@@ -205,6 +328,61 @@ export default function Home() {
     },
   });
 
+  const liveScrapeSearchMutation = useMutation({
+    mutationFn: async (constraints: SearchConstraints) => {
+      await apiRequest("POST", "/api/search", {
+        sessionId,
+        constraints,
+      });
+      
+      const response = await apiRequest("POST", "/api/scrape/live", {
+        sessionId,
+        sources: ["alibaba", "thomasnet"],
+      });
+      return response.json() as Promise<{ jobId: string; message: string; query: string }>;
+    },
+    onMutate: () => {
+      setCurrentStep("search");
+      setAgentStatus("searching");
+      setResults([]);
+      setAgentLogs([]);
+      addAgentLog({
+        agentName: "Orchestrator",
+        action: "Starting live supplier search...",
+        status: "searching",
+      });
+    },
+    onSuccess: (data) => {
+      setScrapeJobId(data.jobId);
+      setIsLiveScraping(true);
+      
+      addAgentLog({
+        agentName: "System",
+        action: `Searching for: "${data.query}"`,
+        status: "searching",
+        details: "Launching AI agents to scrape Alibaba and ThomasNet...",
+      });
+      
+      pollingIntervalRef.current = setInterval(() => {
+        pollJobStatus(data.jobId);
+      }, 2000);
+    },
+    onError: (error: Error) => {
+      setAgentStatus("error");
+      addAgentLog({
+        agentName: "System",
+        action: "Live scraping failed to start",
+        status: "error",
+        details: error.message,
+      });
+      toast({
+        title: "Failed to start live search",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleFileSelect = useCallback((file: File, type: InputTypeValue) => {
     analyzeProductMutation.mutate({ inputType: type, file, isPrivate });
   }, [analyzeProductMutation, isPrivate]);
@@ -216,6 +394,18 @@ export default function Home() {
   const handleConstraintsSubmit = useCallback((constraints: SearchConstraints) => {
     searchMutation.mutate(constraints);
   }, [searchMutation]);
+
+  const handleLiveScrapeSubmit = useCallback((constraints: SearchConstraints) => {
+    if (!sessionId) {
+      toast({
+        title: "No session available",
+        description: "Please analyze a product first",
+        variant: "destructive",
+      });
+      return;
+    }
+    liveScrapeSearchMutation.mutate(constraints);
+  }, [liveScrapeSearchMutation, sessionId, toast]);
 
   const handleSupplierSelect = useCallback((match: SupplierMatch) => {
     toast({
@@ -248,7 +438,7 @@ export default function Home() {
   }, [sessionId, updatePrivacyMutation]);
 
   const isAnalyzing = analyzeProductMutation.isPending;
-  const isSearching = searchMutation.isPending;
+  const isSearching = searchMutation.isPending || liveScrapeSearchMutation.isPending || isLiveScraping;
   const isUpdatingPrivacy = updatePrivacyMutation.isPending;
   const isProcessing = isAnalyzing || isSearching;
 
@@ -312,7 +502,9 @@ export default function Home() {
                 <ConstraintBuilder
                   specifications={product.specifications}
                   onSubmit={handleConstraintsSubmit}
-                  isLoading={isSearching}
+                  onLiveScrape={handleLiveScrapeSubmit}
+                  isLoading={searchMutation.isPending}
+                  isLiveScraping={isLiveScraping}
                 />
               </div>
             )}
