@@ -123,8 +123,7 @@ SourceScout/
 │   └── objectStorage.ts # File storage handling
 ├── shared/              # Shared types and schemas
 │   └── schema.ts        # Data models and validation
-├── script/              # Build scripts
-└── migrations/          # Database migrations
+└── script/              # Build scripts
 ```
 
 ## 🔄 Workflow
